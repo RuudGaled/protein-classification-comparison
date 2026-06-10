@@ -1,0 +1,178 @@
+import copy
+import os
+import torch
+from src import config as cfg
+from sklearn.model_selection import train_test_split
+from torch_geometric.loader import DataLoader
+
+def load_and_validate_dataset(file_path: str):
+    """
+    Carica il dataset e verifica l'assenza di valori mancanti (NaN).
+    """
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"Dataset non trovato al percorso: {file_path}")
+        
+    dataset = torch.load(file_path, weights_only=False)
+    
+    # Controllo formale anti-NaN per i nodi
+    has_nan = any(torch.isnan(data.x).any() for data in dataset)
+    assert not has_nan, "[ERRORE] Il dataset contiene valori NaN nelle feature dei nodi!"
+    
+    print(f"[INFO] Dataset caricato con successo. Numero totale di grafi: {len(dataset)}")
+    return dataset
+
+def check_class_imbalance(dataset):
+    """
+    Analizza e stampa la distribuzione delle classi (Target y) nel dataset.
+    """
+    labels = [data.y.item() for data in dataset]
+    total = len(labels)
+    
+    # Conta le classi (0: non-enzima, 1: enzima)
+    class_0 = labels.count(0)
+    class_1 = labels.count(1)
+    
+    print("\n--- ANALISI BILANCIAMENTO DATASET ---")
+    print(f"Classe 0 (Non-Enzimi): {class_0} ({(class_0/total)*100:.2f}%)")
+    print(f"Classe 1 (Enzimi)    : {class_1} ({(class_1/total)*100:.2f}%)")
+    print("-------------------------------------\n")
+    
+    # Restituisce un dizionario con il conteggio
+    return {0: class_0, 1: class_1}
+
+def stratified_holdout_split(dataset, 
+                             test_size: float = cfg.TEST_SIZE, 
+                             seed: int = cfg.FIXED_SEED):
+    """
+    Isola un Test Set definitivo usando uno split stratificato per evitare Data Leakage.
+    """
+    labels = [data.y.item() for data in dataset]
+    
+    train_val_set, test_set = train_test_split(
+        dataset, 
+        test_size=test_size, 
+        stratify=labels, 
+        random_state=seed
+    )
+    print(f"[INFO] Split Holdout completato: Train+Val = {len(train_val_set)} grafi, Test = {len(test_set)} grafi.")
+    return train_val_set, test_set
+
+def normalize_fold_data(
+    train_graphs,
+    val_graphs,
+    excluded_features=None
+):
+    """
+    Applica una normalizzazione Z-score utilizzando
+    media e deviazione standard calcolate esclusivamente
+    sui dati di training.
+
+    Parameters
+    ----------
+    train_graphs : list
+        Grafi del training set.
+
+    val_graphs : list
+        Grafi del validation set.
+
+    excluded_features : list[int] | None
+        - None: normalizza tutte le feature.
+        - Lista di indici: esclude dalla normalizzazione
+          le feature corrispondenti agli indici specificati.
+
+    Returns
+    -------
+    train_graphs_cp, val_graphs_cp
+        Copie dei grafi con le feature normalizzate.
+    """
+
+    # Crea copie profonde per non modificare i grafi originali
+    train_graphs_cp = [copy.deepcopy(g) for g in train_graphs]
+    val_graphs_cp = [copy.deepcopy(g) for g in val_graphs]
+
+    # Concatena tutte le feature dei nodi del training set
+    # per calcolare statistiche globali
+    all_train_x = torch.cat(
+        [g.x for g in train_graphs_cp],
+        dim=0
+    )
+
+    # Calcola media e deviazione standard per feature
+    mean = all_train_x.mean(dim=0)
+    std = all_train_x.std(dim=0)
+
+    # Evita divisioni per zero nel caso di feature costanti
+    std[std == 0] = 1.0
+
+    n_features = all_train_x.shape[1]
+
+    # Se non sono specificate feature da escludere,
+    # normalizza tutte le feature
+    if excluded_features is None:
+        features_to_normalize = list(range(n_features))
+    else:
+        features_to_normalize = [
+            i for i in range(n_features)
+            if i not in excluded_features
+        ]
+
+    # Normalizza le feature selezionate del training set
+    for g in train_graphs_cp:
+
+        g.x[:, features_to_normalize] = (
+            g.x[:, features_to_normalize]
+            - mean[features_to_normalize]
+        ) / std[features_to_normalize]
+
+    # Applica le stesse statistiche del training
+    # anche al validation set
+    for g in val_graphs_cp:
+
+        g.x[:, features_to_normalize] = (
+            g.x[:, features_to_normalize]
+            - mean[features_to_normalize]
+        ) / std[features_to_normalize]
+
+    return train_graphs_cp, val_graphs_cp
+
+def create_dataloaders(train_set, val_set, batch_size: int = 32):
+    """
+    Incapsula le liste di grafi negli oggetti DataLoader nativi di PyTorch Geometric.
+    """
+    train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, drop_last=True)
+    val_loader = DataLoader(val_set, batch_size=batch_size, shuffle=False)
+    
+    return train_loader, val_loader
+
+def inspect_node_features(dataset):
+    """
+    Analizza la natura delle feature dei nodi.
+
+    Restituisce statistiche utili per decidere
+    quali feature normalizzare.
+    """
+
+    all_x = torch.cat(
+        [graph.x for graph in dataset],
+        dim=0
+    )
+
+    print("\n===== FEATURE INSPECTION =====")
+
+    for col_idx in range(all_x.shape[1]):
+
+        column = all_x[:, col_idx]
+
+        unique_values = torch.unique(column)
+
+        feature_min = column.min().item()
+        feature_max = column.max().item()
+
+        print(
+            f"Feature {col_idx:02d} | "
+            f"min={feature_min:.4f} | "
+            f"max={feature_max:.4f} | "
+            f"unique={len(unique_values)}"
+        )
+
+    print("==============================\n")
