@@ -30,7 +30,7 @@ def get_device() -> torch.device:
     Ritorna esplicitamente il device CPU per preservare la consistenza 
     matematica dei risultati richiesti dal progetto.
     """
-    return torch.device("cpu")
+    return torch.device(cfg.DEVICE)
 
 def summarize_cv_results(scores):
     """
