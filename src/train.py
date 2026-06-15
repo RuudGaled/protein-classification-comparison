@@ -73,6 +73,32 @@ def run_cross_validation(
 
     return f1_scores, auc_scores
 
+def evaluate_model(model: nn.Module, data_loader: DataLoader):
+    """
+    Esegue l'inferenza su un DataLoader estraendo le etichette reali, 
+    le predizioni binarie e le probabilità (score).
+    """
+    model.eval()
+    model.to(torch.device(cfg.DEVICE))
+    
+    y_true = []
+    y_pred = []
+    y_score = []
+
+    with torch.no_grad():
+        for batch_data in data_loader:
+            batch_data = batch_data.to(cfg.DEVICE)
+
+            logits = model(batch_data).squeeze(-1)
+            probs = torch.sigmoid(logits)
+            preds = (probs >= 0.5).long()
+
+            y_true.extend(batch_data.y.cpu().tolist())
+            y_pred.extend(preds.cpu().tolist())
+            y_score.extend(probs.cpu().tolist()) 
+
+    return y_true, y_pred, y_score
+
 def train_single_fold(
     model: nn.Module,
     train_loader: DataLoader,
@@ -106,7 +132,8 @@ def train_single_fold(
         total_graphs = 0  # Contatore dinamico per evitare errori di tipo con Pylance
         
         for batch_data in train_loader:
-            optimizer.zero_grad()               # Resetta i gradienti del passo precedente
+            batch_data = batch_data.to(torch.device(cfg.DEVICE))
+            optimizer.zero_grad()  # Resetta i gradienti del passo precedente
             
             logits = model(batch_data).squeeze(-1) # Output della rete: [batch_size]
             labels = batch_data.y.float()         # Target reale convertito in float per la loss
@@ -125,27 +152,7 @@ def train_single_fold(
             print(f"   [Epoca {epoch:02d}/{epochs:02d}] Training Loss: {epoch_loss:.4f}")
 
     # --- FASE DI VALUTAZIONE FINALE DEL FOLD ---
-    model.eval()
-    y_true = []
-    y_pred = []
-    y_score = []
-
-    with torch.no_grad(): # Disabilita il calcolo dei gradienti per risparmiare memoria e velocizzare
-        for batch_data in val_loader:
-            logits = model(batch_data).squeeze(-1)
-            labels = batch_data.y
-
-            probs = torch.sigmoid(logits)
-
-            # Conversione dei logits in predizioni binarie (Soglia a 0.5)
-            preds = (probs >= 0.5).long()
-            
-            # Accumuliamo i risultati convertendoli in liste Python standard
-            y_true.extend(labels.tolist())
-            y_pred.extend(preds.tolist())
-            y_score.extend(probs.tolist())
-
-    return y_true, y_pred, y_score
+    return evaluate_model(model, val_loader)
 
 def train_final_model(
     dataset,
@@ -169,33 +176,20 @@ def train_final_model(
         mean: Media delle feature calcolata sull'intero dataset di train+val.
         std: Deviazione standard delle feature calcolata sull'intero dataset di train+val.
     """
-    # 1. Copia profonda per evitare di sporcare il dataset originale del notebook
-    dataset_cp = [copy.deepcopy(g) for g in dataset]
-
-    # 2. Calcolo delle statistiche Z-Score sull'intero blocco di addestramento
-    all_x = torch.cat([g.x for g in dataset_cp], dim=0)
+    # Calcolo delle statistiche Z-Score sull'intero blocco di addestramento
+    all_x = torch.cat([g.x for g in dataset], dim=0)
     mean = all_x.mean(dim=0)
     std = all_x.std(dim=0)
-    std[std == 0] = 1.0  # Gestione varianza zero
+    std[std == 0] = 1.0
 
-    # Determina quali feature normalizzare
-    n_features = all_x.shape[1]
-    if excluded_features is None:
-        features_to_normalize = list(range(n_features))
-    else:
-        features_to_normalize = [i for i in range(n_features) if i not in excluded_features]
-
-    # Applicazione della normalizzazione
-    for g in dataset_cp:
-        g.x[:, features_to_normalize] = (
-            g.x[:, features_to_normalize] - mean[features_to_normalize]
-        ) / std[features_to_normalize]
+    # Applichiamo la normalizzazione usando la nuova funzione centralizzata
+    dataset_cp = dl.apply_z_score(dataset, mean, std, excluded_features)
 
     # 3. Creazione del DataLoader finale (con shuffle e drop_last consistenti)
     final_loader = DataLoader(dataset_cp, batch_size=batch_size, shuffle=True, drop_last=False)
 
     # 4. Inizializzazione del modello con le feature dinamiche
-    num_features = n_features
+    num_features = all_x.shape[1]
     model = model_class(in_channels=num_features, hidden_channels=64, dropout_p=dropout_p)
     model.to(cfg.DEVICE)
 
@@ -213,6 +207,7 @@ def train_final_model(
         total_graphs = 0
 
         for batch_data in final_loader:
+            batch_data = batch_data.to(cfg.DEVICE)
             optimizer.zero_grad()
             
             logits = model(batch_data).squeeze(-1)

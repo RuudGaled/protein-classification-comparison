@@ -57,82 +57,39 @@ def stratified_holdout_split(dataset,
     print(f"[INFO] Split Holdout completato: Train+Val = {len(train_val_set)} grafi, Test = {len(test_set)} grafi.")
     return train_val_set, test_set
 
-def normalize_fold_data(
-    train_graphs,
-    val_graphs,
-    excluded_features=None
-):
+def apply_z_score(graphs, mean, std, excluded_features=None):
     """
-    Applica una normalizzazione Z-score utilizzando
-    media e deviazione standard calcolate esclusivamente
-    sui dati di training.
-
-    Parameters
-    ----------
-    train_graphs : list
-        Grafi del training set.
-
-    val_graphs : list
-        Grafi del validation set.
-
-    excluded_features : list[int] | None
-        - None: normalizza tutte le feature.
-        - Lista di indici: esclude dalla normalizzazione
-          le feature corrispondenti agli indici specificati.
-
-    Returns
-    -------
-    train_graphs_cp, val_graphs_cp
-        Copie dei grafi con le feature normalizzate.
+    Applica una normalizzazione Z-Score a una lista di grafi usando medie e std precalcolate,
+    rispettando la maschera delle feature da escludere.
     """
-
-    # Crea copie profonde per non modificare i grafi originali
-    train_graphs_cp = [copy.deepcopy(g) for g in train_graphs]
-    val_graphs_cp = [copy.deepcopy(g) for g in val_graphs]
-
-    # Concatena tutte le feature dei nodi del training set
-    # per calcolare statistiche globali
-    all_train_x = torch.cat(
-        [g.x for g in train_graphs_cp],
-        dim=0
-    )
-
-    # Calcola media e deviazione standard per feature
-    mean = all_train_x.mean(dim=0)
-    std = all_train_x.std(dim=0)
-
-    # Evita divisioni per zero nel caso di feature costanti
-    std[std == 0] = 1.0
-
-    n_features = all_train_x.shape[1]
-
-    # Se non sono specificate feature da escludere,
-    # normalizza tutte le feature
+    graphs_cp = [copy.deepcopy(g) for g in graphs]
+    n_features = graphs_cp[0].x.shape[1]
+    
     if excluded_features is None:
         features_to_normalize = list(range(n_features))
     else:
-        features_to_normalize = [
-            i for i in range(n_features)
-            if i not in excluded_features
-        ]
-
-    # Normalizza le feature selezionate del training set
-    for g in train_graphs_cp:
-
+        features_to_normalize = [i for i in range(n_features) if i not in excluded_features]
+        
+    for g in graphs_cp:
         g.x[:, features_to_normalize] = (
-            g.x[:, features_to_normalize]
-            - mean[features_to_normalize]
+            g.x[:, features_to_normalize] - mean[features_to_normalize]
         ) / std[features_to_normalize]
+        
+    return graphs_cp
 
-    # Applica le stesse statistiche del training
-    # anche al validation set
-    for g in val_graphs_cp:
-
-        g.x[:, features_to_normalize] = (
-            g.x[:, features_to_normalize]
-            - mean[features_to_normalize]
-        ) / std[features_to_normalize]
-
+def normalize_fold_data(train_graphs, val_graphs, excluded_features=None):
+    """
+    Applica la normalizzazione Z-Score calcolando le statistiche sul train
+    e riutilizzandole sul validation tramite apply_z_score.
+    """
+    all_train_x = torch.cat([g.x for g in train_graphs], dim=0)
+    mean = all_train_x.mean(dim=0)
+    std = all_train_x.std(dim=0)
+    std[std == 0] = 1.0
+    
+    train_graphs_cp = apply_z_score(train_graphs, mean, std, excluded_features)
+    val_graphs_cp = apply_z_score(val_graphs, mean, std, excluded_features)
+    
     return train_graphs_cp, val_graphs_cp
 
 def create_dataloaders(train_set, val_set, batch_size: int = 32):
