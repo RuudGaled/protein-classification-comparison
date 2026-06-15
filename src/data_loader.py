@@ -133,3 +133,23 @@ def inspect_node_features(dataset):
         )
 
     print("==============================\n")
+
+def inject_node_noise(dataset, noise_level: float = 0.01, excluded_features=None):
+    """
+    Applica la Noise Injection (Data Augmentation) sulle feature dei nodi.
+    Genera un rumore gaussiano a media zero per aumentare la robustezza del modello, escludendo le feature discrete tramite maschera.
+    """
+    dataset_augmented = [copy.deepcopy(g) for g in dataset]
+    n_features = dataset_augmented[0].x.shape[1]
+
+    if excluded_features is None:
+        features_to_noise = list(range(n_features))
+    else:
+        features_to_noise = [i for i in range(n_features) if i not in excluded_features]
+    
+    for g in dataset_augmented:
+        # Si genera e inietta il rumore solo sulle colonne destinate
+        noise = torch.randn_like(g.x[:, features_to_noise]) * noise_level
+        g.x[:, features_to_noise] += noise
+        
+    return dataset_augmented
