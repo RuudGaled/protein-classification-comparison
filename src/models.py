@@ -2,13 +2,14 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import GCNConv, GATConv, global_mean_pool, global_max_pool
+from src import config as cfg
 
 class ProteinGCN(nn.Module):
     """
     Graph Convolutional Network (GCN) per la classificazione binaria di grafi proteici.
     Sfrutta il message passing standard con normalizzazione del vicinato.
     """
-    def __init__(self, in_channels: int = 32, hidden_channels: int = 64, dropout_p: float = 0.3):
+    def __init__(self, in_channels: int = 32, hidden_channels: int = cfg.DEFAULT_HIDDEN_CHANNELS, dropout_p: float = 0.3):
         super(ProteinGCN, self).__init__()
         
         # --- Strati di Convoluzione su Grafo ---
@@ -50,7 +51,7 @@ class ProteinGAT(nn.Module):
     Graph Attention Network (GAT) per la classificazione binaria di grafi proteici.
     Sfrutta meccanismi di attenzione asimmetrica sui nodi vicini.
     """
-    def __init__(self, in_channels: int = 32, hidden_channels: int = 64, dropout_p: float = 0.3):
+    def __init__(self, in_channels: int = 32, hidden_channels: int = cfg.DEFAULT_HIDDEN_CHANNELS, dropout_p: float = 0.3):
         super(ProteinGAT, self).__init__()
         
         # --- Strati di Convoluzione ad Attenzione ---

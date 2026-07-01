@@ -4,7 +4,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch_geometric.loader import DataLoader
-import copy
 
 from src import config as cfg
 from src import utils as ut
@@ -19,10 +18,12 @@ def run_cross_validation(
     seed=cfg.FIXED_SEED,
     lr=cfg.DEFAULT_LR,
     dropout_p=0.3,
+    hidden_channels=cfg.DEFAULT_HIDDEN_CHANNELS,
     excluded_features=None,
+    noise_level=cfg.NOISE_LEVEL,
 ):
     """
-    Esegue una Stratified K-Fold Cross Validation raccogliendo Macro F1 e ROC-AUC.
+    Esegue una Stratified K-Fold Cross Validation applicando Z-Score e Noise Injection in modo isolato all'interno di ciascun fold. Restituisce Macro F1 e ROC-AUC.
     """
     if train_fold_fn is None:
         raise ValueError("[ERRORE] È necessario fornire una funzione di training (train_fold_fn)")
@@ -45,6 +46,14 @@ def run_cross_validation(
             train_graphs, val_graphs, excluded_features=excluded_features
         )
 
+        # Applicazione Noise Injection solo sul train set del fold
+        if noise_level > 0.0:
+            train_graphs = dl.inject_node_noise(
+                train_graphs, 
+                noise_level=noise_level, 
+                excluded_features=excluded_features
+            )
+
         # Creazione dei DataLoader nativi PyG
         train_loader, val_loader = dl.create_dataloaders(
             train_graphs, val_graphs, batch_size=batch_size
@@ -55,9 +64,11 @@ def run_cross_validation(
         num_features = dataset[0].x.shape[1]
 
         # Istanziamo il modello passando i parametri dinamici per la Grid Search
-        model = model_class(in_channels=num_features, hidden_channels=64, dropout_p=dropout_p)
+        model = model_class(in_channels=num_features, 
+                            hidden_channels=hidden_channels, 
+                            dropout_p=dropout_p)
 
-        # Alleniamo il modello sul fold (riceve 3 elementi in output)
+        # Training sul singolo fold
         y_true, y_pred, y_score = train_fold_fn(
             model, train_loader, val_loader, lr=lr, epochs=cfg.DEFAULT_EPOCHS
         )
@@ -79,7 +90,7 @@ def evaluate_model(model: nn.Module, data_loader: DataLoader):
     le predizioni binarie e le probabilità (score).
     """
     model.eval()
-    model.to(torch.device(cfg.DEVICE))
+    model.to(cfg.DEVICE)
     
     y_true = []
     y_pred = []
@@ -121,7 +132,7 @@ def train_single_fold(
     criterion = nn.BCEWithLogitsLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
 
-    # Spostiamo esplicitamente il modello su CPU (coerente con utils.get_device())
+    # Spostiamo esplicitamente il modello su CPU 
     model.to(cfg.DEVICE)
 
     # Loop delle Epoche
@@ -159,8 +170,10 @@ def train_final_model(
     model_class,
     lr: float,
     dropout_p: float,
+    hidden_channels: int = cfg.DEFAULT_HIDDEN_CHANNELS,
     epochs: int = cfg.DEFAULT_EPOCHS,
     batch_size: int = cfg.DEFAULT_BATCH_SIZE,
+    noise_level: float = cfg.NOISE_LEVEL,
     weight_decay: float = 1e-4,
     excluded_features=None
 ):
@@ -182,15 +195,19 @@ def train_final_model(
     std = all_x.std(dim=0)
     std[std == 0] = 1.0
 
-    # Applichiamo la normalizzazione usando la nuova funzione centralizzata
+    # Applicazione della normalizzazione Z-Score 
     dataset_cp = dl.apply_z_score(dataset, mean, std, excluded_features)
+
+    # Applicazione della Noise Injection DOPO la Z-Score per uniformare l'intensità del rumore
+    if cfg.NOISE_LEVEL > 0.0:
+        dataset_cp = dl.inject_node_noise(dataset_cp, noise_level=noise_level, excluded_features=excluded_features)
 
     # 3. Creazione del DataLoader finale (con shuffle e drop_last consistenti)
     final_loader = DataLoader(dataset_cp, batch_size=batch_size, shuffle=True, drop_last=False)
 
     # 4. Inizializzazione del modello con le feature dinamiche
     num_features = all_x.shape[1]
-    model = model_class(in_channels=num_features, hidden_channels=64, dropout_p=dropout_p)
+    model = model_class(in_channels=num_features, hidden_channels=hidden_channels, dropout_p=dropout_p)
     model.to(cfg.DEVICE)
 
     criterion = nn.BCEWithLogitsLoss()
@@ -199,7 +216,7 @@ def train_final_model(
     loss_history = []
 
     print(f"[INFO] Avvio Addestramento Finale del modello {model_class.__name__}...")
-    print(f"       Configurazione: LR={lr} | Dropout={dropout_p} | Epoche={epochs}\n")
+    print(f"       Configurazione: LR={lr} | Dropout={dropout_p} | Epoche={epochs} | Canali={hidden_channels} | Rumore={noise_level}\n")
 
     for epoch in range(1, epochs + 1):
         model.train()

@@ -141,4 +141,5 @@ datasets/
 checkpoints/
 runs/
 logs/
+results/*
 diario_di_bordo/

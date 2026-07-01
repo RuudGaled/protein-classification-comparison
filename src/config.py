@@ -6,6 +6,9 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 # Path del dataset
 DATASET_PATH = PROJECT_ROOT / "data" / "dataset.pt"
 
+# Path directory risultati
+RESULTS_DIR = PROJECT_ROOT / "results"
+
 # Seed per la riproducibilità degli esperimenti.
 FIXED_SEED = 42
 
@@ -26,3 +29,11 @@ DEVICE = "cpu"
 
 # Numero di fold utilizzati nella Cross-Validation.
 N_SPLITS = 3
+
+# Valore del rumore (Noise Injection)
+NOISE_LEVEL = 0.01
+
+# Canali di default usati nella griglia principale
+DEFAULT_HIDDEN_CHANNELS = 64       
+# Canali alternativi testati nel test mirato
+ALT_HIDDEN_CHANNELS = 32

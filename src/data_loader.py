@@ -54,7 +54,7 @@ def stratified_holdout_split(dataset,
         stratify=labels, 
         random_state=seed
     )
-    print(f"[INFO] Split Holdout completato: Train+Val = {len(train_val_set)} grafi, Test = {len(test_set)} grafi.")
+    print(f"[INFO] Split Dataset completato: Train+Val = {len(train_val_set)} grafi, Test = {len(test_set)} grafi.")
     return train_val_set, test_set
 
 def apply_z_score(graphs, mean, std, excluded_features=None):
@@ -125,12 +125,30 @@ def inspect_node_features(dataset):
         feature_min = column.min().item()
         feature_max = column.max().item()
 
+        mean = column.mean().item()
+        std = column.std().item()
+
+        median = column.median().item()
+
         print(
             f"Feature {col_idx:02d} | "
             f"min={feature_min:.4f} | "
             f"max={feature_max:.4f} | "
+            f"mean={mean:.4f} | "
+            f"std={std:.4f} | "
+            f"median={median:.4f} | "
             f"unique={len(unique_values)}"
         )
+
+    # print("\nAnalisi specifica sui tipi dei valori presenti nelle feature 09-20\n")
+
+    # for i in range(9, 21):
+    #     col = all_x[:, i]
+
+    #     print(
+    #         i,
+    #         torch.allclose(col, col.round())
+    #     )   
 
     print("==============================\n")
 
