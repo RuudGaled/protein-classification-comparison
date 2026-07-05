@@ -31,7 +31,15 @@ def main():
     dataset = dl.load_and_validate_dataset(str(cfg.DATASET_PATH))
 
     # Analisi features
-    dl.inspect_node_features(dataset)
+    skewed_features, df_feature_stats = dl.inspect_node_features(dataset)
+
+    # Generazione ed esportazione del grafico delle distribuzioni
+    ut.plot_skewed_features_distributions(
+        dataset=dataset, 
+        feature_indices=skewed_features, 
+        save_path=cfg.RESULTS_DIR / "node_features_distributions.png",
+        show = False
+    )
 
     # Analisi dello sbilanciamento delle classi
     dl.check_class_imbalance(dataset)

@@ -1,9 +1,14 @@
 import copy
 import os
 import torch
+import matplotlib.pyplot as plt
+import seaborn as sns
+import numpy as np
+import pandas as pd
 from src import config as cfg
 from sklearn.model_selection import train_test_split
 from torch_geometric.loader import DataLoader
+from scipy.stats import skew
 
 def load_and_validate_dataset(file_path: str):
     """
@@ -20,6 +25,59 @@ def load_and_validate_dataset(file_path: str):
     
     print(f"[INFO] Dataset caricato con successo. Numero totale di grafi: {len(dataset)}")
     return dataset
+
+def inspect_node_features(dataset):
+    """
+    Analizza la natura delle feature dei nodi calcolando le statistiche descrittive.
+
+    Restituisce la lista delle feature asimmetriche e un DataFrame riassuntivo.
+    """
+
+    all_x = torch.cat([graph.x for graph in dataset], dim=0)
+    print("\n===== FEATURE INSPECTION AND SKEWNESS ANALYSIS =====")
+
+    # Indici delle feature continue con forte asimmetria
+    highly_skewed_features = []
+    stats_records = []
+
+    for col_idx in range(all_x.shape[1]):
+        column = all_x[:, col_idx]
+
+        unique_values = torch.unique(column)
+        unique_count = unique_values.numel()
+
+        feature_min = column.min().item()
+        feature_max = column.max().item()
+        mean = column.mean().item()
+        std = column.std().item()
+        median = column.median().item()
+
+        # Calcolo della Skewness 
+        feat_skew = skew(column.cpu().numpy())
+
+        print(
+            f"Feature {col_idx:02d} | "
+            f"min={feature_min:.2f} | max={feature_max:.2f} | "
+            f"mean={mean:.2f} | median={median:.2f} | "
+            f"std={std:.2f} | skew={feat_skew:.2f} | unique={unique_count}"
+        )
+
+        # Salvataggio record per il DataFrame
+        stats_records.append({
+            "Feature": col_idx, "Min": feature_min, "Max": feature_max,
+            "Mean": mean, "Median": median, "Std": std, 
+            "Skewness": feat_skew, "Unique": unique_count
+        })
+
+        # Se la skewness è maggiore di 1.5 e non è una variabile binaria/one-hot
+        if abs(feat_skew) > 1.5 and unique_count > 10:
+            highly_skewed_features.append(col_idx)
+
+    print("====================================================\n")
+
+    df_stats = pd.DataFrame(stats_records)
+
+    return highly_skewed_features, df_stats
 
 def check_class_imbalance(dataset):
     """
@@ -100,57 +158,6 @@ def create_dataloaders(train_set, val_set, batch_size: int = 32):
     val_loader = DataLoader(val_set, batch_size=batch_size, shuffle=False)
     
     return train_loader, val_loader
-
-def inspect_node_features(dataset):
-    """
-    Analizza la natura delle feature dei nodi.
-
-    Restituisce statistiche utili per decidere
-    quali feature normalizzare.
-    """
-
-    all_x = torch.cat(
-        [graph.x for graph in dataset],
-        dim=0
-    )
-
-    print("\n===== FEATURE INSPECTION =====")
-
-    for col_idx in range(all_x.shape[1]):
-
-        column = all_x[:, col_idx]
-
-        unique_values = torch.unique(column)
-
-        feature_min = column.min().item()
-        feature_max = column.max().item()
-
-        mean = column.mean().item()
-        std = column.std().item()
-
-        median = column.median().item()
-
-        print(
-            f"Feature {col_idx:02d} | "
-            f"min={feature_min:.4f} | "
-            f"max={feature_max:.4f} | "
-            f"mean={mean:.4f} | "
-            f"std={std:.4f} | "
-            f"median={median:.4f} | "
-            f"unique={len(unique_values)}"
-        )
-
-    # print("\nAnalisi specifica sui tipi dei valori presenti nelle feature 09-20\n")
-
-    # for i in range(9, 21):
-    #     col = all_x[:, i]
-
-    #     print(
-    #         i,
-    #         torch.allclose(col, col.round())
-    #     )   
-
-    print("==============================\n")
 
 def inject_node_noise(dataset, noise_level: float = 0.01, excluded_features=None):
     """
