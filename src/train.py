@@ -21,62 +21,173 @@ def run_cross_validation(
     hidden_channels=cfg.DEFAULT_HIDDEN_CHANNELS,
     excluded_features=None,
     noise_level=cfg.NOISE_LEVEL,
+    use_log_transform=False,
 ):
     """
-    Esegue una Stratified K-Fold Cross Validation applicando Z-Score e Noise Injection in modo isolato all'interno di ciascun fold. Restituisce Macro F1 e ROC-AUC.
+    Esegue una Stratified K-Fold Cross Validation su un dataset di grafi.
+
+    Per ciascun fold vengono eseguite, nell'ordine:
+
+    1. eventuale trasformazione logaritmica delle feature continue,
+       stimando gli shift esclusivamente sul training fold;
+    2. normalizzazione Z-Score utilizzando media e deviazione standard
+       calcolate sul training fold;
+    3. applicazione Noise Injection sul training fold;
+    4. addestramento del modello;
+    5. valutazione sul validation fold.
+
+    Parameters
+    ----------
+    dataset : list[torch_geometric.data.Data]
+        Dataset completo da suddividere nei vari fold.
+    model_class : type
+        Classe del modello da istanziare per ogni fold.
+    n_splits : int, default=cfg.N_SPLITS
+        Numero di fold della Cross Validation.
+    batch_size : int, default=cfg.DEFAULT_BATCH_SIZE
+        Dimensione dei batch.
+    train_fold_fn : callable
+        Funzione che esegue l'addestramento di un singolo fold e restituisce
+        (y_true, y_pred, y_score).
+    seed : int, default=cfg.FIXED_SEED
+        Seed utilizzato per la suddivisione stratificata.
+    lr : float, default=cfg.DEFAULT_LR
+        Learning rate dell'ottimizzatore.
+    dropout_p : float, default=0.3
+        Probabilità di dropout del modello.
+    hidden_channels : int, default=cfg.DEFAULT_HIDDEN_CHANNELS
+        Numero di canali nascosti del modello.
+    excluded_features : iterable[int] | None, default=None
+        Indici delle feature discrete da escludere dalla trasformazione
+        logaritmica, dalla normalizzazione e dalla Noise Injection.
+    noise_level : float, default=cfg.NOISE_LEVEL
+        Intensità della Noise Injection applicata al training fold.
+    use_log_transform : bool, default=False
+        Se True applica la trasformazione logaritmica alle sole feature
+        continue.
+
+    Returns
+    -------
+    tuple[list[float], list[float]]
+        Liste contenenti i valori di Macro F1-score e ROC AUC ottenuti
+        nei vari fold.
+
+    Raises
+    ------
+    ValueError
+        Se train_fold_fn non è specificata.
+    ValueError
+        Se excluded_features contiene indici non validi.
     """
     if train_fold_fn is None:
-        raise ValueError("[ERRORE] È necessario fornire una funzione di training (train_fold_fn)")
+        raise ValueError(
+            "[ERRORE] È necessario fornire una funzione di training "
+            "(train_fold_fn)."
+        )
 
-    labels = [g.y.item() for g in dataset]
-    skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed)
+    # Dimensione delle feature dei nodi 
+    # (tutti i grafi hanno lo stesso numero di feature per nodo)
+    n_features = dataset[0].x.shape[1]
+
+    excluded = set(excluded_features or [])
+
+    # Controllo validità indici feature da escludere
+    invalid_features = [
+        idx for idx in excluded
+        if idx < 0 or idx >= n_features
+    ]
+
+    if invalid_features:
+        raise ValueError(
+            f"Indici di feature esclusi non validi: "
+            f"{sorted(invalid_features)}."
+        )
+
+    # Feature continue sulle quali applicare le trasformazioni
+    continuous_features = [
+        idx for idx in range(n_features)
+        if idx not in excluded
+    ]
+
+    labels = [graph.y.item() for graph in dataset]
+    skf = StratifiedKFold(
+        n_splits=n_splits,
+        shuffle=True,
+        random_state=seed,
+    )
 
     f1_scores = []
     auc_scores = []
+    dummy_X = np.zeros(len(labels))
 
-    for fold_id, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(labels)), labels), start=1):
+    for fold_id, (train_idx, val_idx) in enumerate(
+        skf.split(dummy_X, labels),
+        start=1,
+    ):
         print(f"\n   --- FOLD {fold_id}/{n_splits} ---")
 
         # Split dei grafi per il fold corrente
         train_graphs = [dataset[i] for i in train_idx]
         val_graphs = [dataset[i] for i in val_idx]
 
-        # Normalizzazione Z-Score selettiva (Prevenzione Data Leakage)
+        # Applicazione trasformazione logaritmica
+        if use_log_transform:
+            shifts = dl.compute_safe_log_shifts(
+                train_graphs,
+                continuous_features,
+            )
+            train_graphs = dl.apply_safe_log_transform(
+                train_graphs,
+                continuous_features,
+                shifts,
+            )
+            val_graphs = dl.apply_safe_log_transform(
+                val_graphs,
+                continuous_features,
+                shifts,
+            )
+            
+        # Normalizzazione Z-Score
         train_graphs, val_graphs = dl.normalize_fold_data(
-            train_graphs, val_graphs, excluded_features=excluded_features
+            train_graphs,
+            val_graphs,
+            excluded_features=excluded,
         )
 
-        # Applicazione Noise Injection solo sul train set del fold
-        if noise_level > 0.0:
-            train_graphs = dl.inject_node_noise(
-                train_graphs, 
-                noise_level=noise_level, 
-                excluded_features=excluded_features
-            )
+        # Applicazione Noise Injection
+        train_graphs = dl.inject_node_noise(
+            train_graphs,
+            noise_level=noise_level,
+            excluded_features=excluded,
+        )
 
         # Creazione dei DataLoader nativi PyG
         train_loader, val_loader = dl.create_dataloaders(
-            train_graphs, val_graphs, batch_size=batch_size
+            train_graphs,
+            val_graphs,
+            batch_size=batch_size,
         )
 
-        # Dimensione delle feature dei nodi 
-        # (tutti i grafi hanno lo stesso numero di feature per nodo)
-        num_features = dataset[0].x.shape[1]
-
-        # Istanziamo il modello passando i parametri dinamici per la Grid Search
-        model = model_class(in_channels=num_features, 
-                            hidden_channels=hidden_channels, 
-                            dropout_p=dropout_p)
+        # Creazione istanza modello
+        model = model_class(
+            in_channels=n_features,
+            hidden_channels=hidden_channels,
+            dropout_p=dropout_p,
+        )
 
         # Training sul singolo fold
         y_true, y_pred, y_score = train_fold_fn(
-            model, train_loader, val_loader, lr=lr, epochs=cfg.DEFAULT_EPOCHS
+            model,
+            train_loader,
+            val_loader,
+            lr=lr,
+            epochs=cfg.DEFAULT_EPOCHS,
         )
 
         # Calcolo delle metriche per il fold corrente
         fold_f1 = f1_score(y_true, y_pred, average="macro")
         fold_auc = roc_auc_score(y_true, y_score)
-
+        
         f1_scores.append(fold_f1)
         auc_scores.append(fold_auc)
 
@@ -175,62 +286,172 @@ def train_final_model(
     batch_size: int = cfg.DEFAULT_BATCH_SIZE,
     noise_level: float = cfg.NOISE_LEVEL,
     weight_decay: float = 1e-4,
-    excluded_features=None
+    excluded_features=None,
+    use_log_transform=False,
 ):
     """
-    Addestra il modello definitivo sull'intero set di Training+Validation (850 grafi).
-    Soddisfa il requisito di addestramento finale e tracciamento della loss per i grafici.
+    Addestra il modello definitivo sull'intero dataset di Training+Validation e restituisce i parametri di preprocessing necessari per applicare la stessa pipeline al test set.
+
+    La pipeline di preprocessing è identica a quella utilizzata durante la
+    Cross Validation:
+
+    1. eventuale trasformazione logaritmica delle feature continue,
+       stimando gli shift sull'intero dataset di Training+Validation;
+    2. normalizzazione Z-Score;
+    3. Noise Injection;
+    4. addestramento del modello.
+
+    Parameters
+    ----------
+    dataset : list[torch_geometric.data.Data]
+        Dataset completo di Training+Validation.
+    model_class : type
+        Classe del modello da addestrare.
+    lr : float
+        Learning rate dell'ottimizzatore.
+    dropout_p : float
+        Probabilità di dropout del modello.
+    hidden_channels : int, default=cfg.DEFAULT_HIDDEN_CHANNELS
+        Numero di canali nascosti del modello.
+    epochs : int, default=cfg.DEFAULT_EPOCHS
+        Numero di epoche di addestramento.
+    batch_size : int, default=cfg.DEFAULT_BATCH_SIZE
+        Dimensione dei batch.
+    noise_level : float, default=cfg.NOISE_LEVEL
+        Intensità della Noise Injection.
+    weight_decay : float, default=1e-4
+        Coefficiente di regolarizzazione L2.
+    excluded_features : iterable[int] | None, default=None
+        Indici delle feature discrete da escludere dalla trasformazione
+        logaritmica, dalla normalizzazione e dalla Noise Injection.
+    use_log_transform : bool, default=False
+        Se True applica la trasformazione logaritmica alle sole feature
+        continue.
 
     Returns
-    -------
-    tuple
-        model: Il modello addestrato definitivo.
-        loss_history: Lista delle loss per ogni epoca (utile per il plot).
-        mean: Media delle feature calcolata sull'intero dataset di train+val.
-        std: Deviazione standard delle feature calcolata sull'intero dataset di train+val.
+-------
+tuple
+    model : nn.Module
+        Modello addestrato.
+    loss_history : list[float]
+        Loss media per ogni epoca.
+    shifts : dict[int, float] | None
+        Shift utilizzati per la trasformazione logaritmica delle feature
+        continue. Vale None se use_log_transform=False.
+    mean : torch.Tensor
+        Media delle feature calcolata sul dataset dopo l'eventuale
+        trasformazione logaritmica.
+    std : torch.Tensor
+        Deviazione standard delle feature calcolata sul dataset dopo
+        l'eventuale trasformazione logaritmica.
+
+    Raises
+    ------
+    ValueError
+        Se excluded_features contiene indici non validi.
     """
-    # Calcolo delle statistiche Z-Score sull'intero blocco di addestramento
-    all_x = torch.cat([g.x for g in dataset], dim=0)
+    # Numero di feature per nodo
+    num_features = dataset[0].x.shape[1]
+
+    excluded = set(excluded_features or [])
+
+    # Controllo validità indici feature da escludere
+    invalid_features = [
+        idx for idx in excluded
+        if idx < 0 or idx >= num_features
+    ]
+
+    if invalid_features:
+        raise ValueError(
+            f"Indici di feature esclusi non validi: "
+            f"{sorted(invalid_features)}."
+        )
+
+    # Feature continue sulle quali applicare le trasformazioni
+    continuous_features = [
+        idx for idx in range(num_features)
+        if idx not in excluded
+    ]
+
+    train_graphs = dataset
+    shifts = None
+
+    # Applicazione trasformazione logaritmica
+    if use_log_transform:
+        shifts = dl.compute_safe_log_shifts(
+            train_graphs,
+            continuous_features,
+        )
+        train_graphs = dl.apply_safe_log_transform(
+            train_graphs,
+            continuous_features,
+            shifts,
+        )
+
+    # Calcolo statistiche Z-Score sul dataset preprocessato
+    all_x = torch.cat([graph.x for graph in train_graphs], dim=0)
+
     mean = all_x.mean(dim=0)
     std = all_x.std(dim=0)
     std[std == 0] = 1.0
 
-    # Applicazione della normalizzazione Z-Score 
-    dataset_cp = dl.apply_z_score(dataset, mean, std, excluded_features)
+    # Normalizzazione Z-Score
+    processed_dataset = dl.apply_z_score(
+        train_graphs,
+        mean,
+        std,
+        excluded,
+    )
 
-    # Applicazione della Noise Injection DOPO la Z-Score per uniformare l'intensità del rumore
-    if cfg.NOISE_LEVEL > 0.0:
-        dataset_cp = dl.inject_node_noise(dataset_cp, noise_level=noise_level, excluded_features=excluded_features)
+    # Applicazione Noise Injection
+    processed_dataset = dl.inject_node_noise(
+        processed_dataset,
+        noise_level=noise_level,
+        excluded_features=excluded,
+    )
 
-    # 3. Creazione del DataLoader finale (con shuffle e drop_last consistenti)
-    final_loader = DataLoader(dataset_cp, batch_size=batch_size, shuffle=True, drop_last=False)
+    # Creazione DataLoader finale
+    final_loader = DataLoader(
+        processed_dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        drop_last=False,
+    )
 
-    # 4. Inizializzazione del modello con le feature dinamiche
-    num_features = all_x.shape[1]
-    model = model_class(in_channels=num_features, hidden_channels=hidden_channels, dropout_p=dropout_p)
+    # Creazione modello
+    model = model_class(
+        in_channels=num_features,
+        hidden_channels=hidden_channels,
+        dropout_p=dropout_p,
+    )
+
     model.to(cfg.DEVICE)
 
     criterion = nn.BCEWithLogitsLoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
+    optimizer = torch.optim.Adam(
+        model.parameters(),
+        lr=lr,
+        weight_decay=weight_decay,
+    )
 
     loss_history = []
 
-    print(f"[INFO] Avvio Addestramento Finale del modello {model_class.__name__}...")
-    print(f"       Configurazione: LR={lr} | Dropout={dropout_p} | Epoche={epochs} | Canali={hidden_channels} | Rumore={noise_level}\n")
-
     for epoch in range(1, epochs + 1):
         model.train()
+
         running_loss = 0.0
         total_graphs = 0
 
         for batch_data in final_loader:
             batch_data = batch_data.to(cfg.DEVICE)
+
             optimizer.zero_grad()
-            
+
             logits = model(batch_data).squeeze(-1)
             labels = batch_data.y.float()
-            
+
             loss = criterion(logits, labels)
+
             loss.backward()
             optimizer.step()
 
@@ -241,7 +462,11 @@ def train_final_model(
         loss_history.append(epoch_loss)
 
         if epoch == 1 or epoch % 10 == 0 or epoch == epochs:
-            print(f"   [Epoca {epoch:02d}/{epochs:02d}] Loss: {epoch_loss:.4f}")
+            print(
+                f"   [Epoca {epoch:02d}/{epochs:02d}] "
+                f"Loss: {epoch_loss:.4f}"
+            )
 
-    print(f"\n[INFO] Addestramento finale completato con successo.")
-    return model, loss_history, mean, std
+    print("\n[INFO] Addestramento finale completato con successo.")
+
+    return model, loss_history, shifts, mean, std
