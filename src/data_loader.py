@@ -23,7 +23,7 @@ def load_and_validate_dataset(file_path: str):
     has_nan = any(torch.isnan(data.x).any() for data in dataset)
     assert not has_nan, "[ERRORE] Il dataset contiene valori NaN nelle feature dei nodi!"
     
-    print(f"[INFO] Dataset caricato con successo. Numero totale di grafi: {len(dataset)}")
+    print(f"[INFO] Dataset caricato con successo. Numero totale di grafi: {len(dataset)}\n")
     return dataset
 
 def inspect_node_features(dataset):
@@ -34,7 +34,7 @@ def inspect_node_features(dataset):
     """
 
     all_x = torch.cat([graph.x for graph in dataset], dim=0)
-    print("\n===== FEATURE INSPECTION AND SKEWNESS ANALYSIS =====")
+    print("="*25+" FEATURE INSPECTION AND SKEWNESS ANALYSIS "+"="*25)
 
     # Indici delle feature continue con forte asimmetria
     highly_skewed_features = []
@@ -73,7 +73,7 @@ def inspect_node_features(dataset):
         if abs(feat_skew) > 1.5 and unique_count > 10:
             highly_skewed_features.append(col_idx)
 
-    print("====================================================\n")
+    print("="*90 + "\n")
 
     df_stats = pd.DataFrame(stats_records)
 
