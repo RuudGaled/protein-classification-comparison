@@ -32,7 +32,7 @@ test_tube_exp/
 tests/tests_tt_dir/
 tests/save_dir
 default/   
-data/
+# data/
 test_tube_logs/
 test_tube_data/
 datasets/
@@ -141,5 +141,5 @@ datasets/
 checkpoints/
 runs/
 logs/
-results/*
+# results/*
 diario_di_bordo/

@@ -1,0 +1,4 @@
+# Ignora qualsiasi file inserito in questa cartella (compresi i dataset .pt)
+*
+
+!.gitignore
