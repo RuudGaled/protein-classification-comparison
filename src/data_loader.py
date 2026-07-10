@@ -123,18 +123,6 @@ def compute_safe_log_shifts(train_graphs, features_to_transform):
 
     Gli shift vengono calcolati esclusivamente sul training set per
     evitare data leakage.
-
-    Parameters
-    ----------
-    train_graphs : list[torch_geometric.data.Data]
-        Lista dei grafi del training set.
-    features_to_transform : iterable[int]
-        Indici delle feature continue da trasformare.
-
-    Returns
-    -------
-    dict[int, float]
-        Dizionario {feature_index: shift}.
     """
     all_train_x = torch.cat([graph.x for graph in train_graphs], dim=0)
 
@@ -160,29 +148,6 @@ def apply_safe_log_transform(graphs, features_to_transform, shifts):
 
     alle feature selezionate, utilizzando gli shift calcolati sul training
     set.
-
-    Parameters
-    ----------
-    graphs : list[torch_geometric.data.Data]
-        Grafi da trasformare.
-    features_to_transform : iterable[int]
-        Indici delle feature da trasformare.
-    shifts : dict[int, float]
-        Dizionario contenente gli shift calcolati sul training set.
-
-    Returns
-    -------
-    list[torch_geometric.data.Data]
-        Nuova lista di grafi trasformati.
-
-    Raises
-    ------
-    KeyError
-        Se manca lo shift per una feature richiesta.
-
-    ValueError
-        Se qualche valore risulta non positivo dopo l'applicazione dello
-        shift, rendendo la trasformazione logaritmica non definita.
     """
     transformed_graphs = [graph.clone() for graph in graphs]
 

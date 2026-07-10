@@ -35,49 +35,6 @@ def run_cross_validation(
     3. applicazione Noise Injection sul training fold;
     4. addestramento del modello;
     5. valutazione sul validation fold.
-
-    Parameters
-    ----------
-    dataset : list[torch_geometric.data.Data]
-        Dataset completo da suddividere nei vari fold.
-    model_class : type
-        Classe del modello da istanziare per ogni fold.
-    n_splits : int, default=cfg.N_SPLITS
-        Numero di fold della Cross Validation.
-    batch_size : int, default=cfg.DEFAULT_BATCH_SIZE
-        Dimensione dei batch.
-    train_fold_fn : callable
-        Funzione che esegue l'addestramento di un singolo fold e restituisce
-        (y_true, y_pred, y_score).
-    seed : int, default=cfg.FIXED_SEED
-        Seed utilizzato per la suddivisione stratificata.
-    lr : float, default=cfg.DEFAULT_LR
-        Learning rate dell'ottimizzatore.
-    dropout_p : float, default=0.3
-        Probabilità di dropout del modello.
-    hidden_channels : int, default=cfg.DEFAULT_HIDDEN_CHANNELS
-        Numero di canali nascosti del modello.
-    excluded_features : iterable[int] | None, default=None
-        Indici delle feature discrete da escludere dalla trasformazione
-        logaritmica, dalla normalizzazione e dalla Noise Injection.
-    noise_level : float, default=cfg.NOISE_LEVEL
-        Intensità della Noise Injection applicata al training fold.
-    use_log_transform : bool, default=False
-        Se True applica la trasformazione logaritmica alle sole feature
-        continue.
-
-    Returns
-    -------
-    tuple[list[float], list[float]]
-        Liste contenenti i valori di Macro F1-score e ROC AUC ottenuti
-        nei vari fold.
-
-    Raises
-    ------
-    ValueError
-        Se train_fold_fn non è specificata.
-    ValueError
-        Se excluded_features contiene indici non validi.
     """
     if train_fold_fn is None:
         raise ValueError(
@@ -232,48 +189,48 @@ def train_single_fold(
     """
     Esegue l'addestramento e la validazione di un modello su un singolo fold.
     Soddisfa i requisiti di regolarizzazione (Weight Decay) e stabilità (BCEWithLogitsLoss).
-
-    Returns
-    -------
-    tuple[list, list]
-        y_true: Etichette reali del validation set.
-        y_pred: Predizioni binarie (0 o 1) generate dal modello.
     """
-    # 1. Funzione di Loss e Ottimizzatore (con L2 Regularization / Weight Decay)
+    # Funzione di loss e ottimizzatore (regolarizzazione L2 tramite Weight Decay)
     criterion = nn.BCEWithLogitsLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
 
-    # Spostiamo esplicitamente il modello su CPU 
+    # Spostia esplicitamente il modello su CPU 
     model.to(cfg.DEVICE)
 
-    # Loop delle Epoche
+    # Ciclo di addestramento
     for epoch in range(1, epochs + 1):
-        # --- FASE DI TRAINING ---
+        # Fase di training
         model.train()
         running_loss = 0.0
-        total_graphs = 0  # Contatore dinamico per evitare errori di tipo con Pylance
+        #  Numero complessivo di grafi elaborati nell'epoca
+        total_graphs = 0  
         
         for batch_data in train_loader:
             batch_data = batch_data.to(torch.device(cfg.DEVICE))
-            optimizer.zero_grad()  # Resetta i gradienti del passo precedente
+            # Resetta i gradienti del passo precedente
+            optimizer.zero_grad()  
             
-            logits = model(batch_data).squeeze(-1) # Output della rete: [batch_size]
-            labels = batch_data.y.float()         # Target reale convertito in float per la loss
+            # Logit prodotti dal modello
+            logits = model(batch_data).squeeze(-1)
+            # Target reale convertito in float per la loss 
+            labels = batch_data.y.float()         
             
-            loss = criterion(logits, labels)    # Calcolo dell'errore
-            loss.backward()                     # Retropropagazione del gradiente
-            optimizer.step()                    # Aggiornamento dei pesi
+            # Calcolo dell'errore
+            loss = criterion(logits, labels)    
+            loss.backward()
+            # Aggiornamento dei pesi
+            optimizer.step()              
             
             running_loss += loss.item() * batch_data.num_graphs
-            total_graphs += batch_data.num_graphs  # Incrementiamo con il numero reale di grafi nel batch
+            total_graphs += batch_data.num_graphs
 
         epoch_loss = running_loss / total_graphs
         
-        # Stampiamo l'andamento ogni 10 epoche per monitorare senza intasare l'output
+        # Stampa periodica della loss per monitorare l'addestramento
         if epoch == 1 or epoch % 10 == 0 or epoch == epochs:
             print(f"   [Epoca {epoch:02d}/{epochs:02d}] Training Loss: {epoch_loss:.4f}")
 
-    # --- FASE DI VALUTAZIONE FINALE DEL FOLD ---
+    # Valutazione finale del modello sul validation fold
     return evaluate_model(model, val_loader)
 
 def train_final_model(
@@ -300,55 +257,6 @@ def train_final_model(
     2. normalizzazione Z-Score;
     3. Noise Injection;
     4. addestramento del modello.
-
-    Parameters
-    ----------
-    dataset : list[torch_geometric.data.Data]
-        Dataset completo di Training+Validation.
-    model_class : type
-        Classe del modello da addestrare.
-    lr : float
-        Learning rate dell'ottimizzatore.
-    dropout_p : float
-        Probabilità di dropout del modello.
-    hidden_channels : int, default=cfg.DEFAULT_HIDDEN_CHANNELS
-        Numero di canali nascosti del modello.
-    epochs : int, default=cfg.DEFAULT_EPOCHS
-        Numero di epoche di addestramento.
-    batch_size : int, default=cfg.DEFAULT_BATCH_SIZE
-        Dimensione dei batch.
-    noise_level : float, default=cfg.NOISE_LEVEL
-        Intensità della Noise Injection.
-    weight_decay : float, default=1e-4
-        Coefficiente di regolarizzazione L2.
-    excluded_features : iterable[int] | None, default=None
-        Indici delle feature discrete da escludere dalla trasformazione
-        logaritmica, dalla normalizzazione e dalla Noise Injection.
-    use_log_transform : bool, default=False
-        Se True applica la trasformazione logaritmica alle sole feature
-        continue.
-
-    Returns
--------
-tuple
-    model : nn.Module
-        Modello addestrato.
-    loss_history : list[float]
-        Loss media per ogni epoca.
-    shifts : dict[int, float] | None
-        Shift utilizzati per la trasformazione logaritmica delle feature
-        continue. Vale None se use_log_transform=False.
-    mean : torch.Tensor
-        Media delle feature calcolata sul dataset dopo l'eventuale
-        trasformazione logaritmica.
-    std : torch.Tensor
-        Deviazione standard delle feature calcolata sul dataset dopo
-        l'eventuale trasformazione logaritmica.
-
-    Raises
-    ------
-    ValueError
-        Se excluded_features contiene indici non validi.
     """
     # Numero di feature per nodo
     num_features = dataset[0].x.shape[1]

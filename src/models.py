@@ -7,61 +7,63 @@ from src import config as cfg
 class ProteinGCN(nn.Module):
     """
     Graph Convolutional Network (GCN) per la classificazione binaria di grafi proteici.
-    Sfrutta il message passing standard con normalizzazione del vicinato.
+    Utilizza il message passing standard con aggregazione normalizzata dei nodi vicini.
     """
     def __init__(self, in_channels: int = 32, hidden_channels: int = cfg.DEFAULT_HIDDEN_CHANNELS, dropout_p: float = 0.3):
         super(ProteinGCN, self).__init__()
         
-        # --- Strati di Convoluzione su Grafo ---
+        # Livelli convolutivi sul grafo
         self.conv1 = GCNConv(in_channels, hidden_channels)
         self.conv2 = GCNConv(hidden_channels, hidden_channels)
         
-        # --- Classificatore Finale (Simple MLP con Dropout) ---
-        # Poiché concateniamo Mean e Max Pooling, l'input del fully connected raddoppia
+        # Classificatore finale (Simple MLP con Dropout)
+        # La concatenazione di Global Mean Pooling e Global Max Pooling
+        # produce un vettore di dimensione hidden_channels * 2.
         self.classifier = nn.Sequential(
             nn.Linear(hidden_channels * 2, hidden_channels // 2),
             nn.ReLU(),
             nn.Dropout(p=dropout_p),
-            nn.Linear(hidden_channels // 2, 1)  # 1 output per il logit (BCEWithLogitsLoss)
+            nn.Linear(hidden_channels // 2, 1)  # Restituisce un logit per BCEWithLogitsLoss.
         )
 
     def forward(self, data):
-        # x: [num_nodi, in_channels], edge_index: [2, num_archi], batch: [num_nodi]
+        
         x, edge_index, batch = data.x, data.edge_index, data.batch
         
-        # 1. Primo livello convolutivo + attivazione
+        # Primo livello convolutivo + funzione di attivazione.
         x = self.conv1(x, edge_index)
         x = F.relu(x)
         
-        # 2. Secondo livello convolutivo
+        # Secondo livello convolutivo + funzione di attivazione.
         x = self.conv2(x, edge_index)
         x = F.relu(x)
         
-        # 3. Readout Phase: Concatenazione di Global Mean e Max Pooling
+        # Fase Readout: Concatenazione di Global Mean e Max Pooling
         x_mean = global_mean_pool(x, batch)
         x_max = global_max_pool(x, batch)
-        x_pooled = torch.cat([x_mean, x_max], dim=-1) # [batch_size, hidden_channels * 2]
+        x_pooled = torch.cat([x_mean, x_max], dim=-1) 
         
-        # 4. Classificazione
+        # Classificazione del grafo
         return self.classifier(x_pooled)
 
 
 class ProteinGAT(nn.Module):
     """
     Graph Attention Network (GAT) per la classificazione binaria di grafi proteici.
-    Sfrutta meccanismi di attenzione asimmetrica sui nodi vicini.
+    Utilizza meccanismi di attenzione per pesare il contributo dei nodi vicini.
     """
     def __init__(self, in_channels: int = 32, hidden_channels: int = cfg.DEFAULT_HIDDEN_CHANNELS, dropout_p: float = 0.3):
         super(ProteinGAT, self).__init__()
         
-        # --- Strati di Convoluzione ad Attenzione ---
-        # Layer 1: usiamo 2 teste. L'output concatenato sarà di dimensione (hidden_channels // 2) * 2 = hidden_channels
+        # Livelli convolutivi con meccanismo di attenzione
+        # Layer 1: 2 teste di attenzione.
         self.conv1 = GATConv(in_channels, hidden_channels // 2, heads=2, concat=True)
         
-        # Layer 2: usiamo 1 sola testa per stabilizzare l'output a hidden_channels prima del pooling
+        # Layer 2: una sola testa per ottenere direttamente
+        # una rappresentazione di dimensione hidden_channels.
         self.conv2 = GATConv(hidden_channels, hidden_channels, heads=1, concat=True)
         
-        # --- Classificatore Finale (Identico a GCN per equità di confronto) ---
+        # Classificatore finale (identico a GCN)
         self.classifier = nn.Sequential(
             nn.Linear(hidden_channels * 2, hidden_channels // 2),
             nn.ReLU(),
@@ -72,18 +74,18 @@ class ProteinGAT(nn.Module):
     def forward(self, data):
         x, edge_index, batch = data.x, data.edge_index, data.batch
         
-        # 1. Primo livello di attenzione + attivazione
+        # Primo livello di attenzione + funzione di attivazione.
         x = self.conv1(x, edge_index)
         x = F.relu(x)
         
-        # 2. Secondo livello di attenzione
+        # Secondo livello di attenzione + funzione di attivazione.
         x = self.conv2(x, edge_index)
         x = F.relu(x)
         
-        # 3. Readout Phase: Concatenazione di Global Mean e Max Pooling
+        # Fase Readout: Concatenazione di Global Mean e Max Pooling
         x_mean = global_mean_pool(x, batch)
         x_max = global_max_pool(x, batch)
         x_pooled = torch.cat([x_mean, x_max], dim=-1)
         
-        # 4. Classificazione
+        # Classificazione del grafo.
         return self.classifier(x_pooled)
