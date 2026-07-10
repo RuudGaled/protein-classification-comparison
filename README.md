@@ -1,10 +1,10 @@
 # Progetto di Deep Learning: Classificazione Funzionale di Strutture Proteiche
 
-**Relazione Tecnica:** Il report accademico in formato PDF con l'analisi dettagliata e le discussioni dei risultati è disponibile all'interno della root del repository.
-
 Questo repository contiene una pipeline ingegnerizzata di Deep Learning per la classificazione binaria di grafi molecolari (enzimi vs non-enzimi). Il progetto implementa reti neurali su grafi (GCN e GAT) e include sperimentazioni avanzate di data preparation (Log-Transform, Z-Score selettiva, Noise Injection) e studi di ridondanza delle feature (rimozione one-hot).
 
 **Nota sulla Riproducibilità:** Per garantire la massima riproducibilità tra macchine diverse (Windows/Mac/Linux), l'intero progetto e le relative dipendenze sono stati configurati esplicitamente in modalità **CPU-Only**.
+
+**Relazione Tecnica:** Il report in formato PDF con l'analisi dettagliata e le discussioni dei risultati è disponibile all'interno della root del repository.
 
 ---
 
