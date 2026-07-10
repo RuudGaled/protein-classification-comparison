@@ -1,5 +1,7 @@
 # Progetto di Deep Learning: Classificazione Funzionale di Strutture Proteiche
 
+**Relazione Tecnica:** Il report accademico in formato PDF con l'analisi dettagliata e le discussioni dei risultati è disponibile all'interno della root del repository.
+
 Questo repository contiene una pipeline ingegnerizzata di Deep Learning per la classificazione binaria di grafi molecolari (enzimi vs non-enzimi). Il progetto implementa reti neurali su grafi (GCN e GAT) e include sperimentazioni avanzate di data preparation (Log-Transform, Z-Score selettiva, Noise Injection) e studi di ridondanza delle feature (rimozione one-hot).
 
 **Nota sulla Riproducibilità:** Per garantire la massima riproducibilità tra macchine diverse (Windows/Mac/Linux), l'intero progetto e le relative dipendenze sono stati configurati esplicitamente in modalità **CPU-Only**.
@@ -104,16 +106,23 @@ python -m pip install -r requirements.txt
 ```bash
 python -m ipykernel install --user --name=dl_env --display-name "Python (dl_env)"
 ```
+----
 
 ## 2. Preparazione dei Dati
 
-Il **Dataset G3: "Classificazione Funzionale di Strutture Proteiche"** non è tracciato su Git (ignorato tramite `.gitignore`). Per poter eseguire i modelli, è necessario inserire lo specifico file `dataset.pt` all'interno della directory `data/`.
+Il **Dataset G3: "Classificazione Funzionale di Strutture Proteiche"** non è tracciato su Git (ignorato tramite `.gitignore`).     
+Per poter eseguire i modelli, è necessario inserire lo specifico file `dataset.pt` all'interno della directory `data/`.
 
 Il percorso atteso dallo script sarà dunque: `protein-classification-comparison/data/dataset.pt`.
+
+----
 
 ## 3. Riproduzione degli Esperimenti e Training
 
 L'intera pipeline (Grid Search, Esperimenti di Data Preparation, Rimozione One-Hot e Addestramento Finale) è completamente automatizzata.
+
+> [!NOTE]
+> **Tempi di calcolo:** L'esecuzione dell'intera pipeline su CPU (compresa la Grid Search sistematica su tutte le combinazioni di iperparametri delle due architetture) richiede circa **6 minuti complessivi**.
 
 È possibile eseguire il progetto in due modi:
 
@@ -135,6 +144,8 @@ Se si preferisce un'esecuzione step-by-step accompagnata da analisi visuale inte
 2. Navigare nella cartella `notebooks/` e aprire il file `model_comparison.ipynb`.
 3. Assicurarsi che il kernel selezionato in alto a destra sia quello creato in precedenza (`dl_env`).
 4. Eseguire le celle sequenzialmente.
+
+----
 
 ## 4. Risultati e Artefatti
 
